@@ -1,0 +1,97 @@
+.App {
+  min-height: 100vh;
+  background: #0d1117;
+  color: #e6edf3;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+}
+
+.App-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4rem 2rem;
+  gap: 2rem;
+}
+
+h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #58a6ff, #3fb950);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin: 0;
+}
+
+p {
+  color: #8b949e;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.status-badge {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 20px;
+  padding: 0.5rem 1.5rem;
+  font-size: 0.9rem;
+}
+
+.status-running { color: #d29922; }
+.status-healthy { color: #3fb950; }
+
+.build-info {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 500px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #21262d;
+  font-size: 0.9rem;
+}
+
+.info-row:last-child { border-bottom: none; }
+.label { color: #8b949e; }
+.value { color: #58a6ff; font-family: monospace; }
+
+.pipeline-stages { width: 100%; max-width: 700px; text-align: center; }
+
+h2 {
+  font-size: 1.3rem;
+  color: #e6edf3;
+  margin-bottom: 1.5rem;
+}
+
+.stages-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.stage-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 1.2rem;
+  transition: border-color 0.2s;
+}
+
+.stage-card:hover { border-color: #58a6ff; }
+
+.stage-icon {
+  font-size: 1.5rem;
+  color: #3fb950;
+  margin-bottom: 0.5rem;
+}
+
+.stage-name {
+  font-size: 0.9rem;
+  color: #8b949e;
+  font-weight: 500;
+}

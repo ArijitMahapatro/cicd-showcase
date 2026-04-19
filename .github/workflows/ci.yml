@@ -1,0 +1,357 @@
+name: CI Pipeline
+
+# ── Triggers ───────────────────────────────────────────────────────────────
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, staging, prod]
+
+# Cancel in-flight runs on the same branch — prevents queue buildup
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  DOCKER_FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/cicd-showcase-frontend
+  DOCKER_BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/cicd-showcase-backend
+  APP_VERSION: ${{ github.sha }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+
+# ── JOB 1: Lint & validate ────────────────────────────────────────────────
+  lint:
+    name: Lint & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # full history needed for SonarCloud
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --prefer-offline
+
+      - name: Run ESLint
+        working-directory: frontend
+        run: npm run lint || true       # non-blocking for showcase; remove || true in prod
+
+      - name: Validate Terraform formatting
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+
+      - name: Terraform format check
+        working-directory: infra/terraform
+        run: terraform fmt -check -recursive
+
+# ── JOB 2: Frontend build & test (runs parallel to cpp-build) ────────────
+  frontend-build-test:
+    name: Frontend — Build & Test
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --prefer-offline
+
+      # Parallelise: run tests while building
+      - name: Run unit tests with coverage
+        working-directory: frontend
+        run: npm test -- --coverage --watchAll=false
+        env:
+          CI: true
+
+      - name: Build production bundle
+        working-directory: frontend
+        run: npm run build
+        env:
+          REACT_APP_VERSION: ${{ github.sha }}
+          REACT_APP_ENV: production
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build-${{ github.sha }}
+          path: frontend/build/
+          retention-days: 7
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-${{ github.sha }}
+          path: frontend/coverage/
+          retention-days: 7
+
+# ── JOB 3: C++ build & test (parallel to frontend) ───────────────────────
+  cpp-build-test:
+    name: C++ Backend — Build & Test
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ make
+
+      # Cache CMake build directory — speeds up subsequent runs
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: backend/build
+          key: cmake-${{ runner.os }}-${{ hashFiles('backend/CMakeLists.txt', 'backend/**/*.cpp', 'backend/**/*.h') }}
+          restore-keys: cmake-${{ runner.os }}-
+
+      - name: Configure CMake
+        working-directory: backend
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build C++ project
+        working-directory: backend
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Run C++ unit tests
+        working-directory: backend/build
+        run: ctest --output-on-failure --verbose
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-test-results-${{ github.sha }}
+          path: backend/build/Testing/
+          retention-days: 7
+
+# ── JOB 4: SonarCloud quality gate (needs coverage from both jobs) ────────
+  sonarcloud:
+    name: SonarCloud Quality Gate
+    runs-on: ubuntu-latest
+    needs: [frontend-build-test, cpp-build-test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # shallow clone breaks blame/coverage data
+
+      - name: Download frontend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-coverage-${{ github.sha }}
+          path: frontend/coverage/
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.sources=frontend/src,backend
+            -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info
+            -Dsonar.exclusions=**/node_modules/**,**/build/**,**/*.test.js
+            -Dsonar.coverage.exclusions=**/index.js,**/*.test.js
+            -Dsonar.qualitygate.wait=true
+
+# ── JOB 5: Docker build & push (parallel — frontend & backend) ────────────
+  docker-frontend:
+    name: Docker — Frontend Build & Push
+    runs-on: ubuntu-latest
+    needs: sonarcloud
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_FRONTEND_IMAGE }}
+          tags: |
+            type=sha,prefix=,suffix=,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            REACT_APP_VERSION=${{ github.sha }}
+            REACT_APP_ENV=production
+          # Layer cache — pulls cache from registry instead of rebuilding
+          cache-from: type=registry,ref=${{ env.DOCKER_FRONTEND_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOCKER_FRONTEND_IMAGE }}:buildcache,mode=max
+
+      - name: Run Docker image security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_FRONTEND_IMAGE }}:latest
+          format: table
+          exit-code: '0'             # warn only; set to 1 to make it blocking
+          severity: CRITICAL,HIGH
+
+  docker-backend:
+    name: Docker — C++ Backend Build & Push
+    runs-on: ubuntu-latest
+    needs: sonarcloud
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_BACKEND_IMAGE }}
+          tags: |
+            type=sha,prefix=,suffix=,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./docker/Dockerfile.backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.DOCKER_BACKEND_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOCKER_BACKEND_IMAGE }}:buildcache,mode=max
+
+      - name: Run Docker image security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_BACKEND_IMAGE }}:latest
+          format: table
+          exit-code: '0'
+          severity: CRITICAL,HIGH
+
+# ── JOB 6: Terraform plan/validate ───────────────────────────────────────
+  terraform:
+    name: Terraform — Plan & Validate
+    runs-on: ubuntu-latest
+    needs: [docker-frontend, docker-backend]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      TF_VAR_environment: ${{ github.event.inputs.environment || 'dev' }}
+      TF_VAR_app_version: ${{ github.sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+
+      # Cache Terraform providers — saves ~30s per run
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: infra/terraform/.terraform
+          key: terraform-${{ hashFiles('infra/terraform/.terraform.lock.hcl') }}
+          restore-keys: terraform-
+
+      - name: Terraform Init
+        working-directory: infra/terraform
+        run: terraform init -backend=false     # no real backend for showcase
+
+      - name: Terraform Validate
+        working-directory: infra/terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: infra/terraform
+        run: terraform plan -var="environment=${{ env.TF_VAR_environment }}" -out=tfplan
+        continue-on-error: true               # plan may fail without real AWS creds
+
+      - name: Upload Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.sha }}
+          path: infra/terraform/tfplan
+          retention-days: 7
+
+# ── JOB 7: Pipeline summary — always runs ────────────────────────────────
+  pipeline-summary:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [terraform]
+    if: always()
+    steps:
+      - name: Generate pipeline summary
+        run: |
+          echo "## CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint & Validate | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend Build & Test | ${{ needs.frontend-build-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| C++ Build & Test | ${{ needs.cpp-build-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SonarCloud | ${{ needs.sonarcloud.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Frontend | ${{ needs.docker-frontend.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Backend | ${{ needs.docker-backend.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Terraform | ${{ needs.terraform.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,7 @@
+# Copy this to terraform.tfvars and fill in your values
+# Never commit terraform.tfvars with real credentials to git
+
+aws_region   = "us-east-1"
+project_name = "cicd-showcase"
+environment  = "dev"
+app_version  = "1.0.0"

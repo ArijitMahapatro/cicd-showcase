@@ -1,0 +1,66 @@
+# alert_rules.yml — SLO-based alerting
+# Demonstrates: SLO/SLI definitions, error budget alerting
+
+groups:
+  - name: cicd-showcase.slos
+    interval: 30s
+    rules:
+
+      # ── Availability SLO: 99.5% over 30 days ──────────────────────────
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{job="frontend", status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="frontend"}[5m]))
+          ) > 0.005
+        for: 5m
+        labels:
+          severity: critical
+          team: devops
+        annotations:
+          summary: "High error rate on frontend (> 0.5%)"
+          description: "Error rate is {{ $value | humanizePercentage }} — SLO breach risk."
+          runbook: "https://github.com/YOUR_USERNAME/cicd-showcase/wiki/runbook-high-error-rate"
+
+      # ── Latency SLO: p99 < 500ms ──────────────────────────────────────
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket{job="frontend"}[5m])) by (le)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: devops
+        annotations:
+          summary: "p99 latency above 500ms"
+          description: "p99 = {{ $value | humanizeDuration }} — check for bottlenecks."
+
+      # ── Availability: service down ─────────────────────────────────────
+      - alert: ServiceDown
+        expr: up{job=~"frontend|backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: devops
+        annotations:
+          summary: "Service {{ $labels.job }} is DOWN"
+          description: "{{ $labels.job }} has been unreachable for more than 1 minute."
+          runbook: "https://github.com/YOUR_USERNAME/cicd-showcase/wiki/runbook-service-down"
+
+      # ── Error budget burn rate (fast burn alert) ───────────────────────
+      - alert: ErrorBudgetBurnRateHigh
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[1h]))
+            /
+            sum(rate(http_requests_total[1h]))
+          ) > (14.4 * 0.005)
+        for: 2m
+        labels:
+          severity: critical
+          team: devops
+        annotations:
+          summary: "Error budget burning fast — investigate immediately"
+          description: "Burn rate is {{ $value | humanize }}x — at this rate the monthly budget will be exhausted in < 1h."

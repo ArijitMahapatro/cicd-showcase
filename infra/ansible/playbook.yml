@@ -1,0 +1,39 @@
+---
+# Ansible playbook — provision and configure the application server
+# Demonstrates: configuration management, idempotent automation
+# Run: ansible-playbook -i inventory/hosts.yml playbook.yml
+
+- name: Configure CI/CD Showcase Application Server
+  hosts: app_servers
+  become: true
+  vars:
+    app_name: cicd-showcase
+    app_version: "{{ lookup('env', 'APP_VERSION') | default('1.0.0') }}"
+    docker_compose_version: "2.24.0"
+    node_version: "20"
+
+  pre_tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+  roles:
+    - role: common
+    - role: docker
+    - role: app_deploy
+
+  post_tasks:
+    - name: Verify application health
+      ansible.builtin.uri:
+        url: "http://localhost:3000/health"
+        method: GET
+        status_code: 200
+      register: health_check
+      retries: 5
+      delay: 10
+      until: health_check.status == 200
+
+    - name: Print deployment result
+      ansible.builtin.debug:
+        msg: "Deployment of {{ app_name }} v{{ app_version }} completed successfully"

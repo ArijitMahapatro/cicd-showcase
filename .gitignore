@@ -1,0 +1,60 @@
+# Node / React
+node_modules/
+frontend/build/
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+npm-debug.log*
+
+# C++ / CMake
+backend/build/
+*.o
+*.out
+*.a
+*.so
+CMakeCache.txt
+CMakeFiles/
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/terraform.tfstate
+infra/terraform/terraform.tfstate.backup
+infra/terraform/.terraform.lock.hcl
+infra/terraform/tfplan
+infra/terraform/terraform.tfvars
+*.tfvars
+!*.tfvars.example
+
+# Ansible
+infra/ansible/*.retry
+infra/ansible/vault_pass.txt
+
+# Docker
+.dockerignore
+
+# Coverage / Test artifacts
+coverage/
+*.lcov
+junit.xml
+
+# Secrets — never commit these
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
