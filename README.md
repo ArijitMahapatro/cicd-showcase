@@ -1,10 +1,11 @@
 # CI/CD Showcase — Enterprise Pipeline
 
-![CI Pipeline](https://github.com/YOUR_USERNAME/cicd-showcase/actions/workflows/ci.yml/badge.svg)
-![CD Pipeline](https://github.com/YOUR_USERNAME/cicd-showcase/actions/workflows/cd.yml/badge.svg)
-![Security Scan](https://github.com/YOUR_USERNAME/cicd-showcase/actions/workflows/nightly-security.yml/badge.svg)
-[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=YOUR_PROJECT_KEY&metric=alert_status)](https://sonarcloud.io/dashboard?id=YOUR_PROJECT_KEY)
-[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=YOUR_PROJECT_KEY&metric=coverage)](https://sonarcloud.io/dashboard?id=YOUR_PROJECT_KEY)
+![CI Pipeline](https://github.com/ArijitMahapatro/cicd-showcase/actions/workflows/ci.yml/badge.svg)
+![CD Pipeline](https://github.com/ArijitMahapatro/cicd-showcase/actions/workflows/cd.yml/badge.svg)
+![Security Scan](https://github.com/ArijitMahapatro/cicd-showcase/actions/workflows/nightly-security.yml/badge.svg)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=arijitmahapatro&metric=alert_status)](https://sonarcloud.io/dashboard?id=arijitmahapatro)
+
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=arijitmahapatro&metric=coverage)](https://sonarcloud.io/dashboard?id=arijitmahapatro)
 
 A production-grade CI/CD showcase demonstrating enterprise DevOps practices:
 **GitHub Actions** · **SonarCloud** · **Docker Hub** · **Terraform** · **Ansible** · **Prometheus**
